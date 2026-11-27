@@ -1,0 +1,2 @@
+TPC-DS 的 tpcds.sql / tpcds_ri.sql 放这里，但它们不进仓库（版权在 TPC）。
+补法：python -m bench.fetch_tpcds --from /path/to/tpcds-kit/tools

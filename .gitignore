@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+_rt*.json
+.pytest_cache/
+
+# TPC-DS 的两份 DDL 不随仓库分发（TPC 保留版权，本仓库是 MIT）。
+# 需要时用 `python -m bench.fetch_tpcds` 从本地 tpcds-kit 复制进来。
+fixtures/schema/*.sql

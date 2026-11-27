@@ -1,0 +1,330 @@
+{
+  "version": "2.0",
+  "domain": "retail",
+  "objects": [
+    {
+      "type": "table_object",
+      "name": "dwd_order_di",
+      "fields": {
+        "grain": "order_id",
+        "row_count": 3400000
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "table_object",
+      "name": "dim_store",
+      "fields": {
+        "grain": "store_id",
+        "row_count": 8200
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "table_object",
+      "name": "dwd_refund_di",
+      "fields": {
+        "grain": "refund_id",
+        "row_count": 410000
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "business_object",
+      "name": "order",
+      "fields": {
+        "aliases": [
+          "订单",
+          "交易单"
+        ],
+        "note": "一次下单。退款单是它的一种后续状态，不是同一行"
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "business_object",
+      "name": "store",
+      "fields": {
+        "aliases": [
+          "门店",
+          "店铺"
+        ],
+        "note": "线下门店，不含前置仓"
+      },
+      "confirmed": {
+        "aliases": {
+          "by": "aiops",
+          "at": "2026-11-27"
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "name": "gmv",
+      "fields": {
+        "kind": "basic",
+        "aliases": [
+          "成交额",
+          "销售额",
+          "GMV",
+          "jiaoyie",
+          "xsje"
+        ],
+        "do_not": "含退款、未扣优惠券；与 gmv_settle 不是同一个口径",
+        "expr": "SUM(pay_amount)",
+        "requires": "is_valid = 1"
+      },
+      "confirmed": {
+        "aliases": {
+          "by": "aiops",
+          "at": "2026-11-27"
+        },
+        "do_not": {
+          "by": "aiops",
+          "at": "2026-11-27"
+        }
+      }
+    },
+    {
+      "type": "metric",
+      "name": "order_cnt",
+      "fields": {
+        "kind": "basic",
+        "aliases": [
+          "订单数",
+          "单量"
+        ],
+        "expr": "COUNT(DISTINCT order_id)",
+        "requires": "is_valid = 1",
+        "do_not": "与 order_num 不是一个数：order_num 不去重，一行一单时两者相等，明细表上会偏大"
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "metric",
+      "name": "refund_amount",
+      "fields": {
+        "kind": "basic",
+        "aliases": [
+          "退款额",
+          "退款金额"
+        ],
+        "expr": "SUM(refund_amount)",
+        "requires": "refund_status IN ('success', 'partial')",
+        "do_not": "只算已成功退款；申请中与已驳回的金额不在里面"
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "metric",
+      "name": "avg_order_amount",
+      "fields": {
+        "kind": "derived",
+        "aliases": [
+          "客单价",
+          "平均订单金额"
+        ],
+        "expr": "gmv / order_cnt",
+        "inputs": [
+          "metric:gmv",
+          "metric:order_cnt"
+        ],
+        "unit": "CNY",
+        "do_not": [
+          "不要用 AVG(pay_amount) 实现——那样口径就被绑死在 dwd_order_di 这张表上了，换成汇总表 ads_gmv_1d 就算不出来",
+          "分母必须与分子同口径：gmv 排除了 is_valid = 0，order_cnt 也必须排除"
+        ]
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "metric",
+      "name": "refund_rate",
+      "fields": {
+        "kind": "derived",
+        "aliases": [
+          "退款率",
+          "退货率"
+        ],
+        "expr": "refund_amount / gmv",
+        "inputs": [
+          "metric:refund_amount",
+          "metric:gmv"
+        ],
+        "unit": "ratio",
+        "do_not": [
+          "口径未定：分子按退款发生日归集，还是按下单日归属到原订单？两种都自洽，但跨月不一样，大促后会差出很多",
+          "分母用 gmv 还是 gmv_settle 也会变：gmv 含退款，用它当分母时这个率可能超过 1"
+        ]
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "metric",
+      "name": "same_store_gmv",
+      "fields": {
+        "kind": "derived",
+        "aliases": [
+          "同店成交额",
+          "同店增长"
+        ],
+        "expr": "gmv",
+        "inputs": [
+          "metric:gmv"
+        ],
+        "scope": "dimension:same_store_set",
+        "do_not": [
+          "表达式与 gmv 完全相同，差别只在算在哪批门店上——所以不能拿它和 gmv 直接比大小",
+          "同店集合每季度重算，跨季度对比不可比"
+        ]
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "dimension",
+      "name": "channel",
+      "fields": {
+        "kind": "basic",
+        "values": [
+          "app",
+          "miniapp",
+          "h5"
+        ],
+        "note": "渠道口径以订单创建时的来源为准"
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "dimension",
+      "name": "same_store_set",
+      "fields": {
+        "kind": "derived",
+        "definition": "开业满 13 个月、且统计期内未闭店的门店集合",
+        "refresh": "每季度重算一次，结果落一张门店清单表",
+        "do_not": "集合本身会变，所以同一个门店在不同季度的同店口径下可能进、也可能出"
+      },
+      "confirmed": {}
+    },
+    {
+      "type": "term",
+      "name": "渠道",
+      "fields": {
+        "same_as": "dimension:channel",
+        "note": "业务口头说「渠道」时指的就是 channel 这一维"
+      },
+      "confirmed": {
+        "same_as": {
+          "by": "aiops",
+          "at": "2026-11-27"
+        }
+      }
+    },
+    {
+      "type": "event",
+      "name": "single_store_refund_spike",
+      "fields": {
+        "expr": "单店退款率连续三天超过 5%",
+        "threshold": 0.05,
+        "window_days": 3,
+        "depends_on": "metric:refund_rate"
+      },
+      "confirmed": {
+        "expr": {
+          "by": "aiops",
+          "at": "2026-11-27"
+        }
+      }
+    },
+    {
+      "type": "decision",
+      "name": "refund_review",
+      "fields": {
+        "rule": "放进复核名单，由区域运营在 24 小时内回访",
+        "owner": "区域运营"
+      },
+      "confirmed": {}
+    }
+  ],
+  "edges": [
+    {
+      "src": "table_object:dwd_order_di",
+      "predicate": "joins_on",
+      "dst": "table_object:dim_store"
+    },
+    {
+      "src": "table_object:dwd_refund_di",
+      "predicate": "joins_on",
+      "dst": "table_object:dwd_order_di"
+    },
+    {
+      "src": "metric:gmv",
+      "predicate": "computed_from",
+      "dst": "table_object:dwd_order_di"
+    },
+    {
+      "src": "metric:order_cnt",
+      "predicate": "computed_from",
+      "dst": "table_object:dwd_order_di"
+    },
+    {
+      "src": "metric:refund_amount",
+      "predicate": "computed_from",
+      "dst": "table_object:dwd_refund_di"
+    },
+    {
+      "src": "metric:avg_order_amount",
+      "predicate": "inputs",
+      "dst": "metric:gmv"
+    },
+    {
+      "src": "metric:avg_order_amount",
+      "predicate": "inputs",
+      "dst": "metric:order_cnt"
+    },
+    {
+      "src": "metric:refund_rate",
+      "predicate": "inputs",
+      "dst": "metric:refund_amount"
+    },
+    {
+      "src": "metric:refund_rate",
+      "predicate": "inputs",
+      "dst": "metric:gmv"
+    },
+    {
+      "src": "metric:same_store_gmv",
+      "predicate": "inputs",
+      "dst": "metric:gmv"
+    },
+    {
+      "src": "metric:same_store_gmv",
+      "predicate": "restricted_to",
+      "dst": "dimension:same_store_set"
+    },
+    {
+      "src": "term:渠道",
+      "predicate": "same_as",
+      "dst": "dimension:channel"
+    },
+    {
+      "src": "event:single_store_refund_spike",
+      "predicate": "evidenced_by",
+      "dst": "metric:refund_rate"
+    },
+    {
+      "src": "decision:refund_review",
+      "predicate": "based_on",
+      "dst": "event:single_store_refund_spike"
+    },
+    {
+      "src": "table_object:dim_store",
+      "predicate": "belongs_to",
+      "dst": "business_object:store"
+    },
+    {
+      "src": "table_object:dwd_order_di",
+      "predicate": "belongs_to",
+      "dst": "business_object:order"
+    }
+  ]
+}

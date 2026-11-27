@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ontology-builder"
+version = "0.4.1"
+description = "本体构建：宽表 + 术语 + 上一版 → 下一版 + 变更清单。人是签发者，机器只产候选"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Aiops-seal" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+ontology-builder = "ontology_builder.__main__:main"
+
+[tool.setuptools]
+packages = ["ontology_builder", "ontology_builder.probe"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
