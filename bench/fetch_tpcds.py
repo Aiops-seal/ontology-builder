@@ -20,7 +20,7 @@ python -m bench.fetch_tpcds --from ~/tpcds-kit/tools   # 从本地目录复制
    解压后 `tools/tpcds.sql` 与 `tools/tpcds_ri.sql`。
 2. 你本地已经有 tpcds-kit（很多人为了别的事 clone 过），用 `--from` 指过去。
 
-拷进来之后 `python -m pytest` 会从 67 passed / 3 skipped 变成 70 passed，
+拷进来之后 `python -m pytest` 会从 66 passed / 3 skipped 变成 69 passed，
 `python -m bench.measure` 也能跑了。
 """
 
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             print(_GUIDE)
         return 1
 
-    print("\n齐了。`python -m pytest -q` 应该是 70 passed。")
+    print("\n齐了。`python -m pytest -q` 应该是 69 passed。")
     return 0
 
 
