@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ontology-builder"
-version = "0.4.1"
+version = "0.5.0"
 description = "本体构建：宽表 + 术语 + 上一版 → 下一版 + 变更清单。人是签发者，机器只产候选"
 readme = "README.md"
 requires-python = ">=3.10"

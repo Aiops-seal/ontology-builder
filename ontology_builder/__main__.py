@@ -97,7 +97,13 @@ def cmd_candidate(args) -> int:
     payload = json.loads(args.payload)
     evidence = json.loads(args.evidence) if args.evidence else None
     cid = store.add_candidate(
-        conn, args.kind, payload, evidence=evidence, at=_now(), route=args.route
+        conn,
+        args.kind,
+        payload,
+        args.evidence_form,
+        evidence=evidence,
+        at=_now(),
+        route=args.route,
     )
     route = conn.execute("SELECT route FROM candidate WHERE id = ?", (cid,)).fetchone()["route"]
     print(f"候选 #{cid} 已记（kind={args.kind}，route={route}）。它不会进本体，除非走 commit")
@@ -110,8 +116,9 @@ def cmd_probe(args) -> int:
     conn = _open(args)
     schema = probe.parse_ddl(Path(args.schema).read_text(encoding="utf-8"))
     if args.foreign_keys:
-        # 只有「别人已经声明过外键」的库才传这个。声明式的走 exempt，
-        # 推断式的走 sign —— 同一个库里两种都能有，route 分辨它们。
+        # 只有「别人已经声明过外键」的库才传这个。DDL 里写着的外键是 ddl_fk，
+        # 在白名单里，能免；包含率推出来的 data_containment 不能免。同一个库里
+        # 两种都能有，route 分辨它们。
         probe.attach_foreign_keys(
             schema, probe.parse_foreign_keys(Path(args.foreign_keys).read_text(encoding="utf-8"))
         )
@@ -135,7 +142,7 @@ def cmd_probe(args) -> int:
     counts = Counter(c.kind for c in cands)
     routes = Counter(route_list)
     print(f"probe：{len(schema)} 张表 · {len(profile.tables)} 张有数据 · {len(route_list)} 条候选")
-    print(f"  route：exempt {routes.get('exempt', 0)} 条（§4.3 三问全过，人只复核）"
+    print(f"  route：exempt {routes.get('exempt', 0)} 条（§4.3 白名单里列着的，人只复核）"
           f" / sign {routes.get('sign', 0)} 条（至少要人签一次）")
     for kind in ("object", "grain", "foreign_key"):
         if counts.get(kind):
@@ -147,7 +154,7 @@ def cmd_probe(args) -> int:
         print("\n外键候选（前 10 条，按包含率与目标表）：")
         for c, r in fks[:10]:
             p, e = c.payload, c.evidence
-            mark = "声明" if c.declared else "推断"
+            mark = "照抄" if c.evidence_form.startswith("ddl_") else "推断"
             print(
                 f"  {p['table']}.{p['column']} -> {p['ref_table']}.{p['ref_column']}  "
                 f"[{mark}/{r}] 包含率 {e.get('containment')} "
@@ -188,14 +195,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("candidate", help="记一条候选（写不进本体）")
     sp.add_argument("db")
-    sp.add_argument("--kind", required=True, help="probe / mine")
+    sp.add_argument("--kind", required=True, help="object / grain / foreign_key")
     sp.add_argument("--payload", required=True, help="候选内容的 json")
-    sp.add_argument("--evidence", default=None, help="证据 json；declared=true 表示声明式证据")
+    sp.add_argument(
+        "--evidence-form",
+        required=True,
+        help="证据形态：ddl_table / ddl_pk / ddl_fk / data_unique / data_containment",
+    )
+    sp.add_argument("--evidence", default=None, help="证据内容 json（给人看的，不决定 route）")
     sp.add_argument(
         "--route",
         default=None,
         choices=("exempt", "sign"),
-        help="不传就按 §4.3 三问自动判（要查库）",
+        help="不传就按 §4.3 白名单自动判（要查库）",
     )
     sp.set_defaults(func=cmd_candidate)
 

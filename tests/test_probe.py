@@ -29,8 +29,8 @@ from ontology_builder.route import decide_route
 
 
 def _route(c, *, occupied: bool = False) -> str:
-    """空库上的 route。probe 自己不判 —— 第一问要查库，见 SPEC §4.3。"""
-    return decide_route(occupied=occupied, impact=c.impact, declared=c.declared)
+    """空库上的 route。probe 自己不判——位置要查库，见 SPEC §4.3。"""
+    return decide_route(occupied=occupied, kind=c.kind, evidence_form=c.evidence_form)
 
 
 DDL = """
@@ -176,7 +176,7 @@ def test_data_alone_finds_it_but_names_reject_it(tmp_path):
     assert len(loose) == 1
     assert loose[0].payload["column"] == "misc_ref"
     assert _route(loose[0]) == "sign"
-    assert loose[0].evidence["declared"] is False
+    assert loose[0].evidence_form == "data_containment"
 
 
 def test_containment_is_symmetric_so_both_directions_appear(tmp_path):
@@ -250,7 +250,7 @@ def test_declared_fk_is_exempt_and_not_duplicated(tmp_path):
     fks = [c for c in infer(schema, prof) if c.kind == "foreign_key" and c.payload["table"] == "fact_order"]
     assert [f.payload["column"] for f in fks] == ["store_id"]
     assert _route(fks[0]) == "exempt"
-    assert fks[0].evidence["declared"] is True
+    assert fks[0].evidence_form == "ddl_fk"
 
 
 def test_grain_declared_exempt_inferred_signed(tmp_path):

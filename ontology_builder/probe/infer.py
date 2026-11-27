@@ -9,9 +9,9 @@
 **C3 是筛子，不是判据。** 单靠 C1∧C2 会把任意两张表的代理键配成外键——TPC-DS 的
 实测在 README 里。
 
-**这里不判 route，只声明两件事**：`declared`（证据是不是声明式的）和 `impact`
-（落点会不会越出这一处）。第三问「位置原本是不是空的」要查库，`infer` 看不见，
-由 `store.add_candidates` 算。见 SPEC §4.3。
+**这里不判 route，只报一件事**：`evidence_form`（证据是什么形态）。位置空不空要
+查库，`infer` 看不见；能不能免由白名单查。两样都在 `store.add_candidates` 那一刻
+算。见 SPEC §4.3。
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from ..route import impact_of
+from ..route import check_form
 from .profile import Profile
 from .schema import Schema, Table
 
@@ -30,11 +30,11 @@ class Candidate:
     kind: str  # object / grain / foreign_key
     payload: dict[str, Any]
     evidence: dict[str, Any]
-    declared: bool  # 证据来自 DDL / 已有本体，还是从数据里算出来的
+    evidence_form: str  # `ddl_*` 照抄建表语句，`data_*` 从数据里算出来
 
-    @property
-    def impact(self) -> str:
-        return impact_of(self.kind, self.payload)
+    def __post_init__(self) -> None:
+        # 形态写错当场炸，不能等写库时被白名单判成 sign——那是把 bug 伪装成判定
+        check_form(self.evidence_form)
 
     def key(self) -> tuple:
         return (self.kind, json.dumps(self.payload, sort_keys=True, ensure_ascii=False))
@@ -45,8 +45,7 @@ class Candidate:
             "kind": self.kind,
             "payload": self.payload,
             "evidence": self.evidence,
-            "declared": self.declared,
-            "impact": self.impact,
+            "evidence_form": self.evidence_form,
         }
 
 
@@ -122,8 +121,8 @@ def infer(
     out.extend(_objects(schema, profile))
     out.extend(_grains(schema, profile))
 
-    declared = _declared_fks(schema, profile)
-    out.extend(declared)
+    from_ddl = _declared_fks(schema, profile)
+    out.extend(from_ddl)
     out.extend(
         _inferred_fks(
             schema,
@@ -132,7 +131,7 @@ def infer(
             require_name_match=require_name_match,
             require_pk_target=require_pk_target,
             name_aliases=name_aliases,
-            skip={(c.payload["table"], c.payload["column"], c.payload["ref_table"], c.payload["ref_column"]) for c in declared},
+            skip={(c.payload["table"], c.payload["column"], c.payload["ref_table"], c.payload["ref_column"]) for c in from_ddl},
         )
     )
     return _sorted(out)
@@ -163,7 +162,7 @@ def _objects(schema: Schema, profile: Profile) -> list[Candidate]:
                     },
                 },
                 evidence={"rows": tp.rows, "columns": len(table.columns), "source": "ddl+data"},
-                declared=True,
+                evidence_form="ddl_table",
             )
         )
     return out
@@ -172,8 +171,8 @@ def _objects(schema: Schema, profile: Profile) -> list[Candidate]:
 def _grains(schema: Schema, profile: Profile) -> list[Candidate]:
     """grain：这行数据的粒度是哪几列。
 
-    DDL 写了 PK → 声明式（只在证据里记一句「数据里也确实唯一」）。
-    DDL 没写 → 只认单列唯一，证据是推断的（`declared=False`）。**组合键不搜**：两两
+    DDL 写了 PK → `ddl_pk`（只在证据里记一句「数据里也确实唯一」）。
+    DDL 没写 → 只认单列唯一，证据形态是 `data_unique`。**组合键不搜**：两两
     组合已经是 C(n,2)，三列以上爆炸，而且组合唯一的列对里绝大多数是巧合（金额+日期
     的组合几乎总唯一）
     """
@@ -191,11 +190,10 @@ def _grains(schema: Schema, profile: Profile) -> list[Candidate]:
                     kind="grain",
                     payload={"table": name, "columns": table.pk},
                     evidence={
-                        "declared": True,
                         "rows": tp.rows,
                         "pk_unique_in_data": ok,
                     },
-                    declared=True,
+                    evidence_form="ddl_pk",
                 )
             )
             continue
@@ -211,11 +209,10 @@ def _grains(schema: Schema, profile: Profile) -> list[Candidate]:
                         kind="grain",
                         payload={"table": name, "columns": [col.name]},
                         evidence={
-                            "declared": False,
                             "rows": tp.rows,
                             "distinct": cp.distinct,
                         },
-                        declared=False,
+                        evidence_form="data_unique",
                     )
                 )
     return out
@@ -254,11 +251,10 @@ def _declared_fks(schema: Schema, profile: Profile) -> list[Candidate]:
                     kind="foreign_key",
                     payload=_fk_payload(name, fk.columns[0], fk.ref_table, fk.ref_columns[0]),
                     evidence={
-                        "declared": True,
                         "containment": containment,
                         "dst_unique": _unique(dst, dst_tp.rows) if dst_tp and dst else None,
                     },
-                    declared=True,
+                    evidence_form="ddl_fk",
                 )
             )
     return out
@@ -320,7 +316,6 @@ def _inferred_fks(
                         kind="foreign_key",
                         payload=_fk_payload(name, col.name, ref_table, ref_col),
                         evidence={
-                            "declared": False,
                             "containment": round(containment, 6),
                             "src_distinct": src.distinct,
                             "src_null_rate": round(src.null_count / tp.rows, 4) if tp.rows else None,
@@ -329,7 +324,7 @@ def _inferred_fks(
                             "dst_unique": True,  # 进到这里就已经过了 C2
                             "name_match": name_match,
                         },
-                        declared=False,
+                        evidence_form="data_containment",
                     )
                 )
     return out

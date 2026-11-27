@@ -77,7 +77,8 @@ def main() -> int:
     print("没有动答案去认它们——这正好是 route=sign 的意思：这条要人看，不是脚本说了算。")
 
     # D 不是测量，是演示：**把答案当输入**，看「免批」那条规矩实际长什么样。
-    # 有声明式外键的库就是这个形状：102 条走 exempt，只剩 11 条要人看。
+    # 有 DDL 声明外键的库就是这个形状：102 条是 ddl_fk，走 exempt；推断出来的
+    # 那几条不在白名单里，要人看。
     from ontology_builder.probe.schema import attach_foreign_keys
 
     declared = T.load_schema()
@@ -87,19 +88,20 @@ def main() -> int:
         T.build(db)
         prof = profile_sqlite(db, declared)
         cands = [c for c in infer(declared, prof) if c.kind == "foreign_key"]
-    # 空库（这些位置都还没有值）→ 只需要看第二问和第三问。
+    # 空库（这些位置都还没有值）→ 只剩白名单这一关。
     exempt = sum(
         1
         for c in cands
-        if decide_route(occupied=False, impact=c.impact, declared=c.declared) == "exempt"
+        if decide_route(occupied=False, kind=c.kind, evidence_form=c.evidence_form)
+        == "exempt"
     )
     print(
         f"\n[演示，不是测量] 假如这个库自己声明过外键：{len(cands)} 条候选里 "
         f"{exempt} 条走免批，{len(cands) - exempt} 条要人签。"
     )
-    print("免批那条规矩的意义全在这里——声明越多，要签字的人越少。")
-    print("注意这三问是「全过才免」：外键的 impact 是 local（joins_on 不参与语义推导），")
-    print("所以声明式的能免；换成 inputs 这种语义边，声明过也照样要签。")
+    print("免批的意义全在这里——DDL 里声明越多，要签字的人越少。")
+    print("但白名单只认「建表语句里写着的」：ddl_fk 能免，data_containment 不能——")
+    print("哪怕包含率是 100%，两个互不相干的代理键也是这样。")
     return 0
 
 

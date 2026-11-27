@@ -26,8 +26,8 @@ ONTOLOGY_VERSION = "2.0"
 # 加词要改这里并写进 SPEC，不能靠调用方随手写一个新字符串。
 # 受控词表。每条必须能说出两件事：**两端允许什么类型**、**什么时候允许用**（守卫）。
 #
-# 说得出守卫的谓词才有公理；说不出的是结构边，守卫由数据给（能不能免批另算，
-# 见 SPEC §4.3 的三问）。说不出守卫又不能靠数据验的，说明这个词还没想清，不许进表。
+# 说得出守卫的谓词才有公理；说不出的是结构边。结构边也不是自动免批——免不免看
+# SPEC §4.3 的白名单，跟守卫在不在数据里是两件事。
 #
 # `src` / `dst` 为空列表表示不限类型——只给策略层这种还没建完的用。
 # 别的谓词都要写死两端：不写死，`event -[derived_from]-> metric` 这种混用会静默成立
@@ -140,8 +140,9 @@ CREATE TABLE IF NOT EXISTS edge (
 -- 候选：probe / mine 直接写这张表，写不进 object / field / edge。
 CREATE TABLE IF NOT EXISTS candidate (
     id           INTEGER PRIMARY KEY,
-    kind         TEXT NOT NULL,        -- probe / mine
+    kind         TEXT NOT NULL,        -- object / grain / foreign_key
     route        TEXT NOT NULL DEFAULT 'sign',  -- exempt / sign，见 SPEC §4.3
+    evidence_form TEXT NOT NULL DEFAULT '',     -- ddl_* / data_*，决定能不能免
     payload_json TEXT NOT NULL,
     evidence_json TEXT,
     proposed_at  TEXT NOT NULL,
@@ -178,6 +179,8 @@ def init(conn: sqlite3.Connection) -> list[str]:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(candidate)")}
     if "route" not in cols:
         conn.execute("ALTER TABLE candidate ADD COLUMN route TEXT NOT NULL DEFAULT 'sign'")
+    if "evidence_form" not in cols:
+        conn.execute("ALTER TABLE candidate ADD COLUMN evidence_form TEXT NOT NULL DEFAULT ''")
     pcols = {r["name"] for r in conn.execute("PRAGMA table_info(predicate)")}
     for col, decl in (
         ("layer", "TEXT NOT NULL DEFAULT 'semantic'"),
@@ -560,33 +563,36 @@ def add_candidate(
     conn: sqlite3.Connection,
     kind: str,
     payload: dict[str, Any],
+    evidence_form: str,
+    *,
     evidence: dict[str, Any] | None = None,
     at: str = "",
     route: str | None = None,
 ) -> int:
     """手写一条候选。
 
-    `route=None` 就按 SPEC §4.3 的三问算（证据类型从 `evidence["declared"]` 取）。
-    传了 `route` 就用传的——但只在「这条候选我知道得比三问多」的时候才该传。
+    `route=None` 就按 SPEC §4.3 算：`(kind, evidence_form)` 在白名单里、位置又空，
+    才 exempt。传了 `route` 就用传的——但只在「这条候选我知道得比白名单多」的
+    时候才该传。
+
+    `evidence_form` 必填：手写候选也得说清证据是什么形态。说不清就该去签，不是
+    免批——这个参数没有默认值，就是不让它默认成「能免」。
     """
     if route is None:
         route = route_for(
-            conn,
-            current_version(conn),
-            kind,
-            payload,
-            declared=bool((evidence or {}).get("declared")),
+            conn, current_version(conn), kind, payload, evidence_form=evidence_form
         )
     if route not in ("exempt", "sign"):
         raise StoreError(
             f"route 只能是 exempt / sign，实际是 {route!r}。谁来签是候选的一部分，不能猜"
         )
     cur = conn.execute(
-        "INSERT INTO candidate (kind, route, payload_json, evidence_json, proposed_at) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO candidate (kind, route, evidence_form, payload_json, evidence_json, proposed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (
             kind,
             route,
+            evidence_form,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
             json.dumps(evidence, ensure_ascii=False, sort_keys=True) if evidence else None,
             at,
@@ -599,26 +605,27 @@ def add_candidate(
 def add_candidates(conn: sqlite3.Connection, cands, at: str = "") -> list[str]:
     """一批候选。probe 的输出走这里——一条一条 add 会让「全进全不进」变成半截状态。
 
-    `route` 在这一刻算，不在生产者里算：第一问要查这个版本有没有已确认的值。
+    `route` 在这一刻算，不在生产者里算：位置要查当前版本有没有已确认的值。
     所以同一批候选用在不同的库上跑，route 可能不同——**那是对的**，同一个改动
     第一次提是新增，第二次提就是改一个签过的东西。
     """
     vid = current_version(conn)
     rows = []
     for c in cands:
-        route = route_for(conn, vid, c.kind, c.payload, declared=c.declared)
+        route = route_for(conn, vid, c.kind, c.payload, evidence_form=c.evidence_form)
         rows.append(
             (
                 c.kind,
                 route,
+                c.evidence_form,
                 json.dumps(c.payload, ensure_ascii=False, sort_keys=True),
                 json.dumps(c.evidence, ensure_ascii=False, sort_keys=True),
                 at,
             )
         )
     conn.executemany(
-        "INSERT INTO candidate (kind, route, payload_json, evidence_json, proposed_at) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO candidate (kind, route, evidence_form, payload_json, evidence_json, proposed_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()
@@ -626,7 +633,7 @@ def add_candidates(conn: sqlite3.Connection, cands, at: str = "") -> list[str]:
 
 
 def candidates(conn: sqlite3.Connection, kind: str | None = None) -> list[dict[str, Any]]:
-    sql = "SELECT id, kind, route, payload_json, evidence_json, proposed_at, state FROM candidate"
+    sql = "SELECT id, kind, route, evidence_form, payload_json, evidence_json, proposed_at, state FROM candidate"
     args: tuple = ()
     if kind:
         sql += " WHERE kind = ?"
@@ -636,6 +643,7 @@ def candidates(conn: sqlite3.Connection, kind: str | None = None) -> list[dict[s
             "id": r["id"],
             "kind": r["kind"],
             "route": r["route"],
+            "evidence_form": r["evidence_form"],
             "payload": json.loads(r["payload_json"]),
             "evidence": json.loads(r["evidence_json"]) if r["evidence_json"] else None,
             "proposed_at": r["proposed_at"],

@@ -119,8 +119,9 @@ def test_candidate_cannot_reach_ontology(conn):
     before = store.state_hash(store.load(conn))
     store.add_candidate(
         conn,
-        "probe",
+        "object",
         {"type": "table_object", "name": "fake_table", "fields": {"grain": "x"}},
+        "ddl_table",
         evidence={"inclusion_rate": 0.0},
         at="2026-11-27T09:30:00",
     )
